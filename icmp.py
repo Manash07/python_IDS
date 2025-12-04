@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file
 
 threshold = 100  # number of packets
-window = 5  # seconds
+time_window = 5  # seconds
 interface = "any"  # network interface to use
 MONGO_URI = os.getenv("MONGO_URI")  # MongoDB connection string from environment variable
 
@@ -24,15 +24,15 @@ except:
     exit(1)
 
 
-db = client["check"] #Name of the database
-collection = db['alerts'] #Name of Collection
+database = client["check"] #Name of the database
+collection = database['alerts'] #Name of Collection
 
 
 # sliding window to store timestamps of ICMP packets
 
-ip_windows = {} #Empty dictionary where IP and timestamps will be stored
+ip_record = {} #Empty dictionary where IP and timestamps will be stored
 
-# command to capture the ICMP packets using tshark
+# Command to capture the ICMP packets using tshark
 
 cmd = [
 
@@ -43,7 +43,7 @@ cmd = [
     "fields",  # Output format: fields
     "-e", 
     "frame.time_epoch",  # Extract packet timestamp
-    "e",
+    "-e",
     "ip.src"  # Extract source IP address
 ]
 
@@ -56,20 +56,36 @@ proc = subprocess.Popen(cmd, stdout= subprocess.PIPE, stderr=subprocess.DEVNULL,
 try:
     for line in proc.stdout:
         try:
-            ts, ip = line.strip().split()
-            ts = float(ts)
+            tst, ip = line.strip().split()
+            tst = float(tst)
         except:
             continue
 
-        if ip not in ip_windows:
-            ip_windows[ip] = deque() #Making a queue for each new IP
+        if ip not in ip_record:
+            ip_record[ip] = deque() #Making a queue for each new IP
 
-            ip_windows[ip].append(ts)
+        ip_record[ip].append(tst)
+        
+        while ip_record[ip] and ip_record[ip][0] < tst - time_window:
+            ip_record[ip].popleft()  # Remove timestamps outside the sliding window
+            print(ip_record) #Optional not required 
 
+        if len(ip_record[ip]) >= threshold:
+            count = len(ip_record[ip])
+    
+            alert = {
+                "ip": ip,
+                "timestamp": datetime.now(timezone.utc),
+                "message": f"ICMP flood detected from {ip} with {len(ip_record[ip])} packets in {time_window} seconds."
+            }
+            collection.insert_one(alert)  # Insert alert into MongoDB
+            print(alert)
+            proc.terminate()  # Terminate tshark process after alert
+            break
 
 
 except KeyboardInterrupt:
     print("Stopping ICMP monitoring.")
 
 finally:
-    proc.wait
+    proc.wait()
