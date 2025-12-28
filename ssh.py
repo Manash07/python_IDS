@@ -1,45 +1,91 @@
 import subprocess
-from collections import defaultdict
+from collections import defaultdict, deque
+from datetime import datetime, timezone
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
 
-# Threshold for brute-force alert
-threshold = 5  
+# ------------------ ENV ------------------ #
+load_dotenv(dotenv_path="/home/manash/Desktop/networkids/python/.env", override=True)
+
+MONGO_URI = os.getenv("MONGO_URI")
+
+# ------------------ CONFIG ------------------ #
+threshold = 20        # SSH packets in window
+time_window = 10      # seconds
 interface = "any"
-# Count unsuccessful SSH attempts per source IP
-attempt_count = defaultdict(int)
+ALERT_COOLDOWN = 60   # seconds
 
-# Run tshark to capture SSH packets in real-time
-# tcp.flags.syn == 1 and tcp.flags.ack == 0 means connection attempt
-tshark_cmd = [
+# ------------------ MongoDB ------------------ #
+client = MongoClient(MONGO_URI)
+db = client["alert_db"]
+collection = db["alerts"]
+
+# ------------------ SSH Tracking ------------------ #
+ip_packets = defaultdict(deque)
+last_alert_time = {}
+
+cmd = [
     "tshark",
-    "-l", "-i", interface,
-    "-Y", "tcp.dstport == 22 and tcp.flags.syn == 1 and tcp.flags.ack == 0",
+    "-i", interface,
+    "-Y", "tcp.port == 22",
     "-T", "fields",
+    "-e", "frame.time_epoch",
     "-e", "ip.src"
 ]
 
-print("🔍 Monitoring SSH traffic... Press Ctrl+C to stop.\n")
+proc = subprocess.Popen(
+    cmd,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    text=True
+)
 
-process = subprocess.Popen(tshark_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+print("🔍 SSH brute-force monitoring started...")
 
 try:
-    for raw_line in iter(process.stdout.readline, b""):
-        line = raw_line.decode().strip()
-        if not line:
+    for line in proc.stdout:
+        try:
+            timestamp, ip = line.strip().split()
+            timestamp = float(timestamp)
+        except ValueError:
             continue
-        
-        src_ip = line
-        attempt_count[src_ip] += 1
 
-        print(f"[+] SSH attempt detected from {src_ip}. Count = {attempt_count[src_ip]}")
+        ip_packets[ip].append(timestamp)
 
-        if attempt_count[src_ip] >= THRESHOLD:
-            print("\n🚨 ALERT! SSH Brute Force Attempt Detected!")
-            print(f"Source IP: {src_ip}")
-            print(f"Attempts: {attempt_count[src_ip]}")
-            print("Action recommended: Block IP using firewall (ufw/iptables)\n")
-            attempt_count[src_ip] = 0
-            
+        # Sliding window cleanup
+        while ip_packets[ip] and ip_packets[ip][0] < timestamp - time_window:
+            ip_packets[ip].popleft()
+
+        print(f"SSH packets from {ip} | count={len(ip_packets[ip])}")
+
+        if len(ip_packets[ip]) >= threshold:
+            now = datetime.now(timezone.utc)
+
+            # Cooldown check
+            if ip in last_alert_time:
+                if (now - last_alert_time[ip]).total_seconds() < ALERT_COOLDOWN:
+                    continue
+
+            alert = {
+                "type": "alert",
+                "attack": "SSH Brute Force",
+                "ip": ip,
+                "timestamp": now,
+                "message": f"High-rate SSH authentication traffic detected from {ip}",
+                "tips": "Inspect /var/log/auth.log and block the IP if malicious.",
+                "status": "unresolved"
+            }
+
+            collection.insert_one(alert)
+            last_alert_time[ip] = now
+
+            print("🚨 ALERT STORED:", alert)
+
 except KeyboardInterrupt:
-    print("\nMonitoring stopped.")
-    process.terminate()
+    print("\nSSH monitoring stopped by user.")
 
+finally:
+    proc.terminate()
+    proc.wait()
+    client.close()
