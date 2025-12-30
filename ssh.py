@@ -5,23 +5,23 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 
-# ------------------ ENV ------------------ #
+# ENV
 load_dotenv(dotenv_path="/home/manash/Desktop/networkids/python/.env", override=True)
 
 MONGO_URI = os.getenv("MONGO_URI")
 
-# ------------------ CONFIG ------------------ #
+# Configuration 
 threshold = 20        # SSH packets in window
 time_window = 10      # seconds
 interface = "any"
 ALERT_COOLDOWN = 60   # seconds
 
-# ------------------ MongoDB ------------------ #
+# MongoDB
 client = MongoClient(MONGO_URI)
 db = client["alert_db"]
 collection = db["alerts"]
 
-# ------------------ SSH Tracking ------------------ #
+# SSH Tracking
 ip_packets = defaultdict(deque)
 last_alert_time = {}
 
@@ -41,7 +41,7 @@ proc = subprocess.Popen(
     text=True
 )
 
-print("🔍 SSH brute-force monitoring started...")
+print(" SSH packet monitoring started...")
 
 try:
     for line in proc.stdout:
@@ -80,7 +80,7 @@ try:
             collection.insert_one(alert)
             last_alert_time[ip] = now
 
-            print("🚨 ALERT STORED:", alert)
+            print("ALERT STORED:", alert)
 
 except KeyboardInterrupt:
     print("\nSSH monitoring stopped by user.")
