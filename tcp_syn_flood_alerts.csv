@@ -1,0 +1,2 @@
+timestamp,attack_type,source_ip,syn_count,time_window,severity,message
+2026-01-13T17:41:44.519182+00:00,TCP_SYN_FLOOD,10.232.71.26,500,10,High,High rate of TCP SYN packets detected (possible SYN flood attack)

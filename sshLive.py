@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 # CONFIG
 
-THRESHOLD = 10            # SSH packets
-TIME_WINDOW = 5           # seconds
-COOLDOWN = 10             # seconds
+THRESHOLD = 20            # SSH packets
+TIME_WINDOW = 10           # seconds
+COOLDOWN = 60             # seconds
 INTERFACE = "any"
 
 BACKEND_SOCKET_URL = "http://localhost:5001"
@@ -41,7 +41,7 @@ last_emitted = {}     # cooldown tracking
 cmd = [
     "tshark",
     "-i", INTERFACE,
-    "-Y", "tcp.dstport == 22 and tcp.flags.syn == 1",
+    "-Y", "tcp.port == 22",
     "-T", "fields",
     "-e", "frame.time_epoch",
     "-e", "ip.src"
@@ -88,7 +88,7 @@ try:
             if not last_time or (now - last_time).total_seconds() >= COOLDOWN:
                 alert = {
                     "attack_type": ATTACK_TYPE,
-                    "source_ip": ip,
+                    "ip": ip,
                     "attempts": count,
                     "time_window": TIME_WINDOW,
                     "severity": "High",
